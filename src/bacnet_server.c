@@ -1,5 +1,10 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <modbus-tcp.h>
+#include <unistd.h>
+#include <getopt.h>
+#include <string.h>
+#include <pthread.h>
 
 #include <libbacnet/address.h>
 #include <libbacnet/device.h>
@@ -35,7 +40,90 @@ static uint16_t test_data[] = {
     0xA4EC, 0x6E39, 0x8740, 0x1065, 0x9134, 0xFC8C };
 #define NUM_TEST_DATA (sizeof(test_data)/sizeof(test_data[0]))
 
+/* start adding linked listed and thread*/
+
+struct list_object_s {
+    char *string;                   /* 8 bytes */
+    int strlen;                     /* 4 bytes */
+    struct list_object_s *next;     /* 8 bytes */
+};
+/* list_head is initialised to NULL on application launch as it is located in 
+ * the .bss. list_head must be accessed with list_lock held */
 static pthread_mutex_t timer_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t list_data_ready = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t list_data_flush = PTHREAD_COND_INITIALIZER;
+static struct list_object_s *list_head;
+
+static void add_to_list(char *input) {
+    /* Allocate memory */
+    struct list_object_s *last_item;
+    struct list_object_s *new_item = malloc(sizeof(struct list_object_s));
+    if (!new_item) {
+        fprintf(stderr, "Malloc failed\n");
+        exit(1);
+    }
+
+    /* Set up the object */
+    new_item->string = strdup(input);
+    new_item->strlen = strlen(input);
+    new_item->next = NULL;
+
+    /* list_head is shared between threads, need to lock before access */
+    pthread_mutex_lock(&list_lock);
+
+    if (list_head == NULL) {
+        /* Adding the first object */
+        list_head = new_item;
+    } else {
+        /* Adding the nth object */
+        last_item = list_head;
+        while (last_item->next) last_item = last_item->next;
+        last_item->next = new_item;
+    }
+
+    /* Inform print_and_free that data is available */
+    pthread_cond_signal(&list_data_ready);
+    /* Release shared data lock */
+    pthread_mutex_unlock(&list_lock);
+}
+static void *print_and_free(void *arg) {
+    struct list_object_s *cur_object;
+
+    printf("thread is starting\n");
+
+    while (1) {
+        /* Wait until some data is available */
+        pthread_mutex_lock(&list_lock);
+
+        while (!list_head)
+            pthread_cond_wait(&list_data_ready, &list_lock);
+
+        cur_object = list_get_first();
+        /* Release lock, all further accesses are not shared */
+        pthread_mutex_unlock(&list_lock);
+
+
+        printf("t2: String is: %s\n", cur_object->string);
+        printf("t2: String length is %i\n", cur_object->strlen);
+        free(cur_object->string);
+        free(cur_object);
+
+        /* Inform list_flush that some work has been completed */
+        pthread_cond_signal(&list_data_flush);
+    }
+}
+
+static void list_flush(void) {
+    pthread_mutex_lock(&list_lock);
+
+    while (list_head) {
+        pthread_cond_signal(&list_data_ready);
+        pthread_cond_wait(&list_data_flush, &list_lock);
+    }
+
+    pthread_mutex_unlock(&list_lock);
+}
+/* end of adding linked list and thread */
 
 static int Update_Analog_Input_Read_Property(
 		BACNET_READ_PROPERTY_DATA *rpdata) {
@@ -184,14 +272,17 @@ static void ms_tick(void) {
     bacnet_apdu_set_confirmed_handler(			\
 		    SERVICE_CONFIRMED_##service,	\
 		    bacnet_handler_##handler)
+
+
 /* start modbus communication */
+
 static void *modbus_K ( void *dummy)
 {
-modbus_t *mb;
-  uint16_t tab_reg[32];
+   modbus_t *mb;
+   uint16_t tab_reg[32];
 
-  mb = modbus_new_tcp("127.0.0.1", 502);
-  modbus_connect(mb);
+   mb = modbus_new_tcp("127.0.0.1", 502);
+   modbus_connect(mb);
 while (1)
 	{ usleep(1000000);
   /* Read 5 registers from the address 0 */
@@ -202,6 +293,8 @@ while (1)
   modbus_free(mb);
   return (dummy);/* this statement make no sense but keep compile running*/
 }
+/* end modbus com */
+
 int main(int argc, char **argv) {
     uint8_t rx_buf[bacnet_MAX_MPDU];
     uint16_t pdu_len;
