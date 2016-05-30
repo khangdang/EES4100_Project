@@ -50,6 +50,7 @@ struct list_object_s {
 /* list_head is initialised to NULL on application launch as it is located in 
  * the .bss. list_head must be accessed with list_lock held */
 static pthread_mutex_t list_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t timer_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t list_data_ready = PTHREAD_COND_INITIALIZER;
 static pthread_cond_t list_data_flush = PTHREAD_COND_INITIALIZER;
 static struct list_object_s *list_head;
@@ -135,6 +136,58 @@ static void list_flush(void) {
 
     pthread_mutex_unlock(&list_lock);
 }
+
+int main(int argc, char **argv) {
+    modbus_t *ctx;
+    int option_index, c, counter, counter_given = 0;
+    char input[256]; /* On the stack */
+    pthread_t print_thread;
+
+    struct option long_options[] = {
+        { "count",      required_argument,  0, 'c' },
+        { "directive",  no_argument,        0, 'd' },
+        { 0 }
+    };
+
+    while (1) {
+        c = getopt_long(argc, argv, "c:d", long_options, &option_index);
+
+        if (c == -1) break;
+
+        switch (c) {
+            case 'c':
+                printf("Got count argument with value %s\n", optarg);
+                counter = atoi(optarg);
+                counter_given = 1;
+                break;
+            case 'd':
+                printf("Got directive argument\n");
+                break;
+        }
+    }
+
+    /* Print out all items of linked list and free them */
+    /* Fork a new thread */
+    pthread_create(&print_thread, NULL, print_and_free, NULL);
+
+    while (scanf("%256s", input) != EOF) {
+        /* Add word to the bottom of a linked list */
+        add_to_list(input);
+        if (counter_given) {
+            counter--;
+            if (!counter) break;
+        }
+    }
+
+    printf("Linked list object is %li bytes long\n",
+                    sizeof(struct list_object_s));
+
+    /* Block here until all objects have been printed */
+   list_flush();
+
+    return 0;
+}
+
 /* end of adding linked list and thread */
 
 static int Update_Analog_Input_Read_Property(
