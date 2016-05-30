@@ -49,7 +49,7 @@ struct list_object_s {
 };
 /* list_head is initialised to NULL on application launch as it is located in 
  * the .bss. list_head must be accessed with list_lock held */
-static pthread_mutex_t timer_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t list_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t list_data_ready = PTHREAD_COND_INITIALIZER;
 static pthread_cond_t list_data_flush = PTHREAD_COND_INITIALIZER;
 static struct list_object_s *list_head;
@@ -86,6 +86,16 @@ static void add_to_list(char *input) {
     /* Release shared data lock */
     pthread_mutex_unlock(&list_lock);
 }
+
+static struct list_object_s *list_get_first(void) {
+    struct list_object_s *first_item;
+
+    first_item = list_head;
+    list_head = list_head->next;
+
+    return first_item;
+}
+
 static void *print_and_free(void *arg) {
     struct list_object_s *cur_object;
 
@@ -110,7 +120,9 @@ static void *print_and_free(void *arg) {
 
         /* Inform list_flush that some work has been completed */
         pthread_cond_signal(&list_data_flush);
+	
     }
+	return 0;
 }
 
 static void list_flush(void) {
