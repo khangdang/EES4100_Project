@@ -51,12 +51,13 @@ struct list_object_s {
 static pthread_mutex_t list_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t timer_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t list_data_ready = PTHREAD_COND_INITIALIZER;
-static pthread_cond_t list_data_flush = PTHREAD_COND_INITIALIZER;
-static struct list_object_s *list_head;
+static struct list_object_s *list_head_0;
+static struct list_object_s *list_head_1;
 
-static void add_to_list(uint16_t input) {
+static void add_to_list(uint16_t input,struct list_object_s **list_head ) {
     /* Allocate memory */
     struct list_object_s *last_item;
+printf("Allocating memory\n");
     struct list_object_s *new_item = malloc(sizeof(struct list_object_s));
     if (!new_item) {
         fprintf(stderr, "Malloc failed\n");
@@ -70,12 +71,12 @@ static void add_to_list(uint16_t input) {
     /* list_head is shared between threads, need to lock before access */
     pthread_mutex_lock(&list_lock);
 
-    if (list_head == NULL) {
+    if (*list_head == NULL) {
         /* Adding the first object */
-        list_head = new_item;
+        *list_head = new_item;
     } else {
         /* Adding the nth object */
-        last_item = list_head;
+        last_item = *list_head;
         while (last_item->next) last_item = last_item->next;
         last_item->next = new_item;
     }
@@ -86,11 +87,11 @@ static void add_to_list(uint16_t input) {
     pthread_mutex_unlock(&list_lock);
 }
 
-static struct list_object_s *list_get_first(void) {
+static struct list_object_s *list_get_first(struct list_object_s **list_head) {
     struct list_object_s *first_item;
 
-    first_item = list_head;
-    list_head = list_head->next;
+    first_item = *list_head;
+    *list_head = (*list_head)->next;
 
     return first_item;
 }
@@ -110,9 +111,14 @@ static int Update_Analog_Input_Read_Property(
 			rpdata->object_instance);
 
     if (rpdata->object_property != bacnet_PROP_PRESENT_VALUE) goto not_pv;
-    if (list_head== NULL) goto not_pv;
-	cur_object = list_get_first();
-    printf("AI_Present_Value request for instance %i\n", instance_no);
+    if (instance_no==0){
+	if (list_head_0== NULL) goto not_pv;
+	cur_object = list_get_first(&list_head_0);}
+    else if (instance_no==1){
+	if (list_head_1== NULL) goto not_pv;
+	cur_object = list_get_first(&list_head_1);}
+    else goto not_pv;
+	printf("AI_Present_Value request for instance %i\n", instance_no);
     /* Update the values to be sent to the BACnet client here.
      * The data should be read from the head of a linked list. You are required
      * to implement this list functionality.
@@ -266,8 +272,9 @@ while (1)
   /* Read 5 registers from the address 0 */
   	modbus_read_registers(mb, 12, 1, tab_reg);/*ask for num from Kim*/
 	printf("got value %x\n", tab_reg[0]);
-	add_to_list(tab_reg[0]);
-	}  
+	add_to_list(tab_reg[0],&list_head_0);
+	add_to_list(tab_reg[1],&list_head_1);	
+}  
   modbus_close(mb);
   modbus_free(mb);
   
