@@ -17,8 +17,14 @@
 #include <libbacnet/ai.h>
 #include "bacnet_namespace.h"
 
+#define NUM_TAB_REG		    32	
 #define NUM_INSTANCE_NO             10
+
+#define MODBUS_IP_ADDRESS           "140.159.153.159"
+#define MODBUS_PORT		    502
+
 #define BACNET_INSTANCE_NO	    76
+#define BACNET_DEVICES_NO	    4
 #define BACNET_PORT		    0xBAC1
 #define BACNET_INTERFACE	    "lo"
 #define BACNET_DATALINK_TYPE	    "bvlc"
@@ -32,14 +38,6 @@
 #define BACNET_BBMD_TTL		    90
 #endif
 
-/* If you are trying out the test suite from home, this data matches the data
- * stored in RANDOM_DATA_POOL for device number 12
- * BACnet client will print "Successful match" whenever it is able to receive
- * this set of data. Note that you will not have access to the RANDOM_DATA_POOL
- * for your final submitted application. */
-/*static uint16_t test_data[] = {
-    0xA4EC, 0x6E39, 0x8740, 0x1065, 0x9134, 0xFC8C };
-#define NUM_TEST_DATA (sizeof(test_data)/sizeof(test_data[0]))*/
 
 /* start adding linked listed and thread*/
 
@@ -47,8 +45,10 @@ struct list_object_s {
     uint16_t modbus_data;                   /* 8 bytes */
     struct list_object_s *next;     /* 8 bytes */
 };
+
 /* list_head is initialised to NULL on application launch as it is located in 
  * the .bss. list_head must be accessed with list_lock held */
+
 static pthread_mutex_t list_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t timer_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t list_data_ready = PTHREAD_COND_INITIALIZER;
@@ -58,7 +58,7 @@ static struct list_object_s *list_head[NUM_INSTANCE_NO];
 static void add_to_list(uint16_t input,struct list_object_s **list_head ) {
     /* Allocate memory */
     struct list_object_s *last_item;
-printf("Allocating memory\n");
+	printf("Allocating memory\n");
     struct list_object_s *new_item = malloc(sizeof(struct list_object_s));
     if (!new_item) {
         fprintf(stderr, "Malloc failed\n");
@@ -115,15 +115,7 @@ static int Update_Analog_Input_Read_Property(
 	cur_object = list_get_first(&list_head[instance_no]);
     
 	printf("AI_Present_Value request for instance %i\n", instance_no);
-    /* Update the values to be sent to the BACnet client here.
-     * The data should be read from the head of a linked list. You are required
-     * to implement this list functionality.
-     *
-     * bacnet_Analog_Input_Present_Value_Set() 
-     *     First argument: Instance No
-     *     Second argument: data to be sent
-     *
-     * Without reconfiguring libbacnet, a maximum of 4 values may be sent */
+    
     bacnet_Analog_Input_Present_Value_Set(instance_no,  cur_object->modbus_data);
     /* bacnet_Analog_Input_Present_Value_Set(1, test_data[index++]); */
     /* bacnet_Analog_Input_Present_Value_Set(2, test_data[index++]); */
@@ -208,26 +200,6 @@ static void *second_tick(void *arg) {
 	/* Transaction state machine: Responsible for retransmissions and ack
 	 * checking for confirmed services */
 	bacnet_tsm_timer_milliseconds(1000);
-
-	/* Re-enables communications after DCC_Time_Duration_Seconds
-	 * Required for SERVICE_CONFIRMED_DEVICE_COMMUNICATION_CONTROL
-	 * bacnet_dcc_timer_seconds(1); */
-
-	/* State machine for load control object
-	 * Required for OBJECT_LOAD_CONTROL
-	 * bacnet_Load_Control_State_Machine_Handler(); */
-
-	/* Expires any COV subscribers that have finite lifetimes
-	 * Required for SERVICE_CONFIRMED_SUBSCRIBE_COV
-	 * bacnet_handler_cov_timer_seconds(1); */
-
-	/* Monitor Trend Log uLogIntervals and fetch properties
-	 * Required for OBJECT_TRENDLOG
-	 * bacnet_trend_log_timer(1); */
-	
-	/* Run [Object_Type]_Intrinsic_Reporting() for all objects in device
-	 * Required for INTRINSIC_REPORTING
-	 * bacnet_Device_local_reporting(); */
 	
 	/* Sleep for 1 second */
 	pthread_mutex_unlock(&timer_lock);
@@ -257,19 +229,28 @@ static void ms_tick(void) {
 static void *modbus_K ( void *dummy)
 {
    modbus_t *mb;
-   uint16_t tab_reg[32];
+   uint16_t tab_reg[NUM_TAB_REG];
    int i; 	
-   mb = modbus_new_tcp("140.159.153.159", 502);
+   mb = modbus_new_tcp(MODBUS_IP_ADDRESS, MODBUS_PORT);
+   if (mb == NULL) {
+               fprintf(stderr, "Unable to allocate libmodbus context\n");
+               return -1;
+           }
+   if (modbus_connect(mb) == -1) {
+   fprintf(stderr, "Connection failed: %s\n", modbus_strerror(errno));
+   modbus_free(mb);
+   return -1;
+           }
    modbus_connect(mb);
 while (1)
 	{ usleep(100000);
   /* Read 5 registers from the address 0 */
-  	modbus_read_registers(mb, 76, 4, tab_reg);/*ask for num from Kim*/
+  	modbus_read_registers(mb, BACNET_INSTANCE_NO, BACNET_DEVICES_NO, tab_reg);/*ask for num from Kim*/
 	printf("got value %x\n", tab_reg[0]);
 for (i=0 ; i< NUM_INSTANCE_NO ; i++)
 	add_to_list(tab_reg[i],&list_head[i]);
 		
-}  
+	}  
   modbus_close(mb);
   modbus_free(mb);
   
